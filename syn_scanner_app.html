@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Syn Scanner (Personal)</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f7f7f7;
+      margin: 0;
+      padding: 1rem;
+      color: #333;
+      line-height: 1.45;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 1rem;
+      padding: 1rem;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      margin-bottom: 1.25rem;
+    }
+    #video {
+      width: 100%;
+      max-width: 420px;
+      border-radius: 0.75rem;
+      border: 2px solid #fd5fa4;
+      display: block;
+      margin: 0 auto 0.5rem;
+    }
+    label {
+      font-weight: 600;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      margin-top: 0.25rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 0.5rem;
+    }
+    button {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.65rem 1.25rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 0.65rem;
+      background: #fd5fa4;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:active {
+      background: #e44f90;
+    }
+    #output p {
+      margin: 0.35rem 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Syn Scanner</h1>
+
+  <div class="card">
+    <video id="video" playsinline></video>
+    <button id="start">Start Camera Scan</button>
+  </div>
+
+  <div class="card">
+    <label for="manual">Or enter barcode manually:</label>
+    <input id="manual" type="text" placeholder="e.g. 5000159484695" />
+    <button id="lookup">Lookup</button>
+  </div>
+
+  <div id="output" class="card" style="display: none;">
+    <h2 id="product-name"></h2>
+    <p><strong>Calories (per 100 g):</strong> <span id="kcal"></span></p>
+    <p><strong>Estimated Syns (per 100 g):</strong> <span id="syns"></span></p>
+  </div>
+
+  <script>
+    const video = document.getElementById("video");
+    const startBtn = document.getElementById("start");
+    const manualInput = document.getElementById("manual");
+    const lookupBtn = document.getElementById("lookup");
+    const output = document.getElementById("output");
+    const productNameEl = document.getElementById("product-name");
+    const kcalEl = document.getElementById("kcal");
+    const synsEl = document.getElementById("syns");
+
+    async function fetchProduct(code) {
+      try {
+        const res = await fetch(
+          `https://world.openfoodfacts.org/api/v2/product/${code}.json`
+        );
+        if (!res.ok) throw new Error("Network error");
+        const json = await res.json();
+        if (json.status !== 1) throw new Error("Product not found");
+        const product = json.product;
+        const name = product.product_name || "Unnamed product";
+        const kcal =
+          product.nutriments.energy_kcal_100g ||
+          product.nutriments["energy-kcal_100g"] ||
+          null;
+        // Simple syns estimate (calories ÷ 20)
+        const syns = kcal !== null ? (kcal / 20).toFixed(1) : null;
+        showResult(name, kcal, syns);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    function showResult(name, kcal, syns) {
+      productNameEl.textContent = name;
+      kcalEl.textContent = kcal !== null ? kcal : "N/A";
+      synsEl.textContent = syns !== null ? syns : "N/A";
+      output.style.display = "block";
+    }
+
+    lookupBtn.addEventListener("click", () => {
+      const code = manualInput.value.trim();
+      if (code) fetchProduct(code);
+    });
+
+    // --- Barcode scanning ---
+    let scanning = false;
+    let detector;
+
+    startBtn.addEventListener("click", async () => {
+      if (scanning) return; // already scanning
+
+      if (!("BarcodeDetector" in window)) {
+        alert(
+          "Barcode scanning isn't supported on this browser. Please enter the barcode manually."
+        );
+        return;
+      }
+
+      try {
+        scanning = true;
+        detector = new BarcodeDetector({
+          formats: ["ean_13", "upc_a", "ean_8", "code_128"],
+        });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
+        video.srcObject = stream;
+        await video.play();
+        requestAnimationFrame(scanFrame);
+      } catch (err) {
+        alert("Camera access was denied or not available.");
+      }
+    });
+
+    async function scanFrame() {
+      if (!scanning) return;
+      try {
+        const barcodes = await detector.detect(video);
+        if (barcodes.length) {
+          const code = barcodes[0].rawValue;
+          stopScan();
+          fetchProduct(code);
+          return;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      requestAnimationFrame(scanFrame);
+    }
+
+    function stopScan() {
+      scanning = false;
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach((t) => t.stop());
+        video.srcObject = null;
+      }
+    }
+  </script>
+</body>
+</html>
